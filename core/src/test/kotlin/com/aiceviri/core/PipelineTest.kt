@@ -117,7 +117,9 @@ class PipelineTest {
         val stt = FakeStt("  ")
         val translator = FakeTranslator(en)
         val pipeline = TranslationPipeline(stt, translator, null, null)
-        assertNull(pipeline.process(clip, Speaker.A, PipelineConfig(pair)) {})
+        val events = mutableListOf<PipelineEvent>()
+        assertNull(pipeline.process(clip, Speaker.A, PipelineConfig(pair)) { events += it })
+        assertTrue(events.any { it is PipelineEvent.Discarded }, "boş sonuç bildirilmeli")
         stt.text = "Altyazı M.K."
         assertNull(pipeline.process(clip, Speaker.A, PipelineConfig(pair)) {})
         stt.text = "..."

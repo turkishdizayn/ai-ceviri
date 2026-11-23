@@ -19,6 +19,11 @@ fun SettingsScreen(
     settings: AppSettings,
     onChange: ((AppSettings) -> AppSettings) -> Unit,
     onBack: () -> Unit,
+    testing: Boolean = false,
+    diagnostic: String? = null,
+    level: Float = 0f,
+    onMicTest: () -> Unit = {},
+    onSpeakerTest: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         Header("Ayarlar", onBack = onBack)
@@ -31,6 +36,22 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Section("Test")
+            Text(
+                "Bir şey çalışmıyorsa önce bu testleri yapın; sonuç sorunun mikrofonda mı, servis ayarında mı, seste mi olduğunu gösterir.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onMicTest, enabled = !testing, modifier = Modifier.weight(1f)) { Text("🎤 Mikrofon testi") }
+                Button(onClick = onSpeakerTest, enabled = !testing, modifier = Modifier.weight(1f)) { Text("🔊 Ses testi") }
+            }
+            if (testing) LevelMeter(level, true)
+            diagnostic?.let {
+                Card {
+                    Text(it, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
             Section("Hazır ayar")
             ServicePreset.entries.forEach { preset ->
                 OutlinedButton(onClick = { onChange(preset.apply) }, modifier = Modifier.fillMaxWidth()) {

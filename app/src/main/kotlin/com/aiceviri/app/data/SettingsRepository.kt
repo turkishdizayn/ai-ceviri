@@ -53,6 +53,7 @@ enum class ServicePreset(val title: String, val apply: (AppSettings) -> AppSetti
             translateModel = "gpt-4o-mini",
             ttsModel = "gpt-4o-mini-tts",
             ttsVoice = "alloy",
+            speakTranslations = true,
         )
     }),
     GROQ("Groq (ücretsiz) + telefon sesi", {
@@ -62,6 +63,7 @@ enum class ServicePreset(val title: String, val apply: (AppSettings) -> AppSetti
             translateModel = "openai/gpt-oss-120b",
             ttsModel = "",
             ttsVoice = "",
+            speakTranslations = true,
         )
     }),
 }

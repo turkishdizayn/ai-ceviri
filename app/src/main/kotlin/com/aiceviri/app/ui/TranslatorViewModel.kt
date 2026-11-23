@@ -86,6 +86,9 @@ data class UiState(
     val photo: PhotoState = PhotoState(),
     val records: List<ConversationRecord> = emptyList(),
     val selectedRecord: ConversationRecord? = null,
+    /** Ayarlar > Test sonuçları. */
+    val testing: Boolean = false,
+    val diagnostic: String? = null,
 )
 
 class TranslatorViewModel(application: Application) : AndroidViewModel(application) {
@@ -126,6 +129,8 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
 
     private var captureJob: Job? = null
     private var segmenter: UtteranceSegmenter? = null
+    /** Bas-konuş (Yüz Yüze): butona basıldığından beri gelen tüm ses. */
+    private var pttFrames: ArrayList<ShortArray>? = null
 
     // Kayıt oturumu
     private var sessionId: String = newSessionId()
@@ -150,7 +155,7 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
 
     fun openSettings() {
         stopListening()
-        _state.update { it.copy(screen = Screen.SETTINGS) }
+        _state.update { it.copy(screen = Screen.SETTINGS, diagnostic = null) }
     }
 
     fun openRecords() {
@@ -236,6 +241,8 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
         // 600 ms sessizlik = cümle sonu (hız ile cümleyi bölmeme arasında denge)
         val seg = UtteranceSegmenter(recorder.sampleRate, silenceMs = 600, preRollMs = 300)
         segmenter = seg
+        val ptt = if (singleUtterance) ArrayList<ShortArray>() else null
+        pttFrames = ptt
         captureJob = viewModelScope.launch {
             // Önceki oturum (mikrofon/SCO) tamamen kapanmadan yenisini açma
             previous?.cancelAndJoin()
@@ -247,18 +254,47 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
                 it.copy(listening = true, activeSpeaker = speaker, status = Status.LISTENING, micSource = source, error = null)
             }
             var done = false
+            var frames = 0
+            var peak = 0.0
+            var warnedSilence = false
             try {
-                recorder.frames(device).takeWhile { !done }.collect { frame ->
+                recorder.frames(device, usingHeadsetMic).takeWhile { !done }.collect { frame ->
                     if (isPlayingOnSpeaker()) {
                         // Hoparlörden okunan çeviriyi tekrar duyup çevirmesin
                         seg.reset()
                         _state.update { it.copy(level = 0f) }
                         return@collect
                     }
-                    val level = (AudioMath.rms(frame) * 8).coerceAtMost(1.0).toFloat()
-                    _state.update { it.copy(level = level) }
+                    val rms = AudioMath.rms(frame)
+                    frames++
+                    peak = maxOf(peak, rms)
+                    _state.update { it.copy(level = levelFor(rms)) }
+                    if (!warnedSilence && frames == 250 && peak < 0.002) {
+                        // 5 sn boyunca neredeyse hiç ses yok: mikrofon gerçekten çalışmıyor
+                        warnedSilence = true
+                        _state.update {
+                            it.copy(
+                                error = "Mikrofondan ses gelmiyor. " + if (usingHeadsetMic) {
+                                    "Ayarlar'dan \"Kulaklık mikrofonunu kullan\"ı kapatıp telefon mikrofonunu deneyin."
+                                } else {
+                                    "Başka bir uygulama mikrofonu kullanıyor olabilir; Ayarlar > Mikrofon testi ile kontrol edin."
+                                },
+                            )
+                        }
+                    }
+                    if (ptt != null) {
+                        ptt.add(frame)
+                        if (ptt.size >= MAX_PTT_FRAMES) {
+                            // 30 sn sınırı: eldekini gönder
+                            done = true
+                            pttFrames = null
+                            handleClip(clipOf(ptt), speaker)
+                            return@collect
+                        }
+                    }
                     val clip = seg.accept(frame)
                     if (clip != null) {
+                        if (ptt != null) pttFrames = null
                         handleClip(clip, speaker)
                         if (singleUtterance) done = true
                     }
@@ -284,14 +320,38 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
     /** Konuşmayı hemen bitir ve eldeki cümleyi çevir. */
     private fun finishUtterance() {
         val speaker = _state.value.activeSpeaker
-        segmenter?.flush()?.let { handleClip(it, speaker) }
+        val clip = segmenter?.flush()
+            // Konuşma algılayıcı tetiklenmediyse bile (sessiz mikrofon, uzak konuşma)
+            // butona basıldığından beri kaydedilen sesin tamamını gönder.
+            ?: pttFrames?.takeIf { it.size >= MIN_PTT_FRAMES }?.let { clipOf(it) }
+        pttFrames = null
+        if (clip != null) {
+            handleClip(clip, speaker)
+        } else {
+            _state.update { it.copy(pendingText = "Ses çok kısa, butona basıp konuşun, bitince tekrar basın.") }
+        }
         stopListening()
     }
+
+    private fun clipOf(frames: List<ShortArray>): AudioClip {
+        val total = frames.sumOf { it.size }
+        val out = ShortArray(total)
+        var pos = 0
+        for (f in frames) {
+            f.copyInto(out, pos)
+            pos += f.size
+        }
+        return AudioClip(out, recorder.sampleRate)
+    }
+
+    /** RMS'i göstergeye uygun 0..1 ölçeğe çevirir (sessiz konuşma da görünür olsun). */
+    private fun levelFor(rms: Double): Float = (kotlin.math.sqrt(rms) * 2.5).coerceIn(0.0, 1.0).toFloat()
 
     fun stopListening() {
         captureJob?.cancel()
         captureJob = null
         segmenter = null
+        pttFrames = null
     }
 
     private fun handleClip(clip: AudioClip, speaker: Speaker?) {
@@ -314,6 +374,82 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
             player.stop()
             pipeline.speak(turn, pipelineConfig(), ::onEvent, force = true)
             onEvent(PipelineEvent.Idle)
+        }
+    }
+
+    // ---------- Ayarlar > Testler ----------
+
+    /** 3 sn kayıt alır, ses seviyesini ölçer ve konuşma tanımaya gönderir. */
+    fun runMicTest() {
+        if (_state.value.testing) return
+        stopListening()
+        viewModelScope.launch {
+            _state.update { it.copy(testing = true, diagnostic = "🎤 3 saniye konuşun… (ör. \"Merhaba, bu bir testtir\")") }
+            val lines = mutableListOf<String>()
+            val wantHeadsetMic = settingsRepo.current.useHeadsetMic && router.headset.value?.hasMic == true
+            val usingHeadsetMic = wantHeadsetMic && router.startHeadsetMic()
+            try {
+                val device = if (usingHeadsetMic) router.headsetMic() else router.phoneMic()
+                val frames = ArrayList<ShortArray>()
+                var peak = 0.0
+                recorder.frames(device, usingHeadsetMic).takeWhile { frames.size < 150 }.collect { f ->
+                    frames.add(f)
+                    val rms = AudioMath.rms(f)
+                    peak = maxOf(peak, rms)
+                    _state.update { it.copy(level = levelFor(rms)) }
+                }
+                val clip = clipOf(frames)
+                val avg = AudioMath.rms(clip.samples)
+                lines += "Mikrofon: " + (if (usingHeadsetMic) "kulaklık (${router.headset.value?.name})" else "telefon")
+                lines += "Ses seviyesi: en yüksek %.3f, ortalama %.4f".format(peak, avg) + when {
+                    peak < 0.002 -> "  ❌ ses yok"
+                    peak < 0.02 -> "  ⚠️ çok düşük"
+                    else -> "  ✅"
+                }
+                if (settingsRepo.current.apiKey.isBlank()) {
+                    lines += "Konuşma tanıma: API anahtarı girilmemiş ❌"
+                } else {
+                    _state.update { it.copy(diagnostic = (lines + "Konuşma tanıma deneniyor…").joinToString("\n")) }
+                    val stt = OpenAiSpeechToText({ settingsRepo.current.toOpenAiConfig() }, app.http)
+                    val text = runCatching { stt.transcribe(clip, settingsRepo.current.languageA, null).text }
+                    lines += text.fold(
+                        onSuccess = { if (it.isBlank()) "Konuşma tanıma: boş sonuç ⚠️" else "Konuşma tanıma ✅: \"$it\"" },
+                        onFailure = { "Konuşma tanıma ❌: ${it.userMessage()}" },
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lines += "Mikrofon açılamadı ❌: ${e.message}"
+            } finally {
+                if (usingHeadsetMic) router.stopHeadsetMic()
+                _state.update { it.copy(testing = false, level = 0f, diagnostic = lines.joinToString("\n")) }
+            }
+        }
+    }
+
+    /** Örnek bir cümleyi çeviri sesiyle okur (kulaklık bağlıysa kulaklıktan). */
+    fun runSpeakerTest() {
+        if (_state.value.testing) return
+        viewModelScope.launch {
+            val s = settingsRepo.current
+            val lang = s.languageA
+            val sample = if (lang.code == "tr") "Merhaba! Bu bir ses testidir. Çeviriler bu sesle okunacak."
+            else "Hello! This is a voice test. Translations will be read with this voice."
+            val sampleLang = if (lang.code == "tr") lang else com.aiceviri.core.model.Languages.ENGLISH
+            val engine = if (s.useDeviceTts) "telefonun sesi" else "bulut (${s.ttsModel})"
+            _state.update { it.copy(testing = true, diagnostic = "🔊 Okunuyor… ($engine)") }
+            var failure: Throwable? = null
+            val turn = Turn(0, Speaker.B, sampleLang, sampleLang, sample, sample, System.currentTimeMillis())
+            pipeline.speak(turn, pipelineConfig(), { ev -> if (ev is PipelineEvent.Failed) failure = ev.error }, force = true)
+            val out = router.headsetOutput()?.let { "kulaklık" } ?: "telefon hoparlörü"
+            _state.update {
+                it.copy(
+                    testing = false,
+                    diagnostic = failure?.let { e -> "Ses ❌ ($engine): ${e.userMessage()}" }
+                        ?: "Ses ✅ ($engine → $out). Duymadıysanız telefonun medya ses seviyesini kontrol edin.",
+                )
+            }
         }
     }
 
@@ -365,15 +501,22 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun onEvent(event: PipelineEvent) {
         when (event) {
-            is PipelineEvent.Transcribing -> _state.update { it.copy(status = Status.TRANSCRIBING) }
+            is PipelineEvent.Transcribing -> _state.update { it.copy(status = Status.TRANSCRIBING, pendingText = null) }
             is PipelineEvent.Transcribed -> _state.update { it.copy(status = Status.TRANSLATING, pendingText = event.text) }
             is PipelineEvent.Translated -> {
                 _state.update { it.copy(turns = pipeline.history.all, pendingText = null) }
                 saveSession()
             }
             is PipelineEvent.Speaking -> _state.update { it.copy(status = Status.SPEAKING) }
+            is PipelineEvent.Discarded -> _state.update {
+                it.copy(pendingText = "Konuşma anlaşılamadı, tekrar deneyin.")
+            }
             is PipelineEvent.Idle -> _state.update {
-                it.copy(status = if (it.listening) Status.LISTENING else Status.IDLE, pendingText = null)
+                it.copy(
+                    status = if (it.listening) Status.LISTENING else Status.IDLE,
+                    // "anlaşılamadı" uyarısı ekranda kalsın, ara metinler temizlensin
+                    pendingText = it.pendingText?.takeIf { t -> t.startsWith("Konuşma anlaşılamadı") || t.startsWith("Ses çok kısa") },
+                )
             }
             is PipelineEvent.Failed -> _state.update {
                 it.copy(
@@ -419,6 +562,8 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private companion object {
+        const val MIN_PTT_FRAMES = 25   // 0,5 sn
+        const val MAX_PTT_FRAMES = 1500 // 30 sn
         fun newSessionId(): String = UUID.randomUUID().toString().take(12)
     }
 }

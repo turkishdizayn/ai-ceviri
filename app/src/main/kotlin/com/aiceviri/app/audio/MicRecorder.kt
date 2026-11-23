@@ -5,7 +5,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.NoiseSuppressor
 import kotlinx.coroutines.Dispatchers
@@ -17,8 +16,11 @@ import kotlinx.coroutines.isActive
 
 /**
  * Mikrofondan 16 kHz mono PCM kareleri (20 ms) üretir.
- * VOICE_COMMUNICATION kaynağı; Bluetooth SCO açıksa kulaklık mikrofonunu,
- * değilse telefon mikrofonunu kullanır ve donanım yankı/gürültü bastırmayı açar.
+ *
+ * - Telefon mikrofonu: VOICE_RECOGNITION kaynağı (konuşma tanıma için ayarlı, sesi
+ *   kısan telefon-görüşmesi işlemesi yok). Desteklenmezse MIC'e düşer.
+ * - Kulaklık (Bluetooth SCO) mikrofonu: VOICE_COMMUNICATION kaynağı (SCO yalnızca
+ *   bu kaynakla gelir) + gürültü bastırma.
  */
 class MicRecorder(val sampleRate: Int = 16_000) {
 
@@ -26,40 +28,51 @@ class MicRecorder(val sampleRate: Int = 16_000) {
 
     /** RECORD_AUDIO izni çağıran tarafından kontrol edilir. */
     @SuppressLint("MissingPermission")
-    fun frames(preferredDevice: AudioDeviceInfo?): Flow<ShortArray> = flow {
+    fun frames(preferredDevice: AudioDeviceInfo?, headsetMic: Boolean): Flow<ShortArray> = flow {
         val minBuf = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minBuf, frameSize * 2 * 10),
-        )
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            record.release()
-            throw IllegalStateException("Mikrofon açılamadı")
+        val bufferSize = maxOf(minBuf, frameSize * 2 * 10)
+        val sources = if (headsetMic) {
+            listOf(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MediaRecorder.AudioSource.MIC)
+        } else {
+            listOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)
         }
-        preferredDevice?.let { record.setPreferredDevice(it) }
+        var record: AudioRecord? = null
+        for (source in sources) {
+            val r = runCatching {
+                AudioRecord(source, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize)
+            }.getOrNull()
+            if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
+                record = r
+                break
+            }
+            r?.release()
+        }
+        val rec = record ?: throw IllegalStateException("Mikrofon açılamadı. Başka bir uygulama mikrofonu kullanıyor olabilir.")
+        preferredDevice?.let { rec.setPreferredDevice(it) }
         val effects = buildList<AudioEffect> {
-            if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(record.audioSessionId)?.let { it.enabled = true; add(it) }
-            if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(record.audioSessionId)?.let { it.enabled = true; add(it) }
+            if (headsetMic && NoiseSuppressor.isAvailable()) {
+                NoiseSuppressor.create(rec.audioSessionId)?.let { it.enabled = true; add(it) }
+            }
         }
         try {
-            record.startRecording()
+            rec.startRecording()
+            if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                throw IllegalStateException("Mikrofon kayda başlamadı. Başka bir uygulama mikrofonu kullanıyor olabilir.")
+            }
             val buffer = ShortArray(frameSize)
             while (currentCoroutineContext().isActive) {
                 var read = 0
                 while (read < frameSize) {
-                    val n = record.read(buffer, read, frameSize - read)
-                    if (n < 0) throw IllegalStateException("Mikrofon okuma hatası: $n")
+                    val n = rec.read(buffer, read, frameSize - read)
+                    if (n < 0) throw IllegalStateException("Mikrofon okuma hatası ($n)")
                     read += n
                 }
                 emit(buffer.copyOf())
             }
         } finally {
-            runCatching { record.stop() }
+            runCatching { rec.stop() }
             effects.forEach { runCatching { it.release() } }
-            record.release()
+            rec.release()
         }
     }.flowOn(Dispatchers.IO)
 }

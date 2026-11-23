@@ -60,7 +60,7 @@ class UtteranceSegmenter(
     private val minSpeechMs: Int = 300,
     private val maxUtteranceMs: Int = 15_000,
     private val preRollMs: Int = 200,
-    private val minThreshold: Double = 0.012,
+    private val minThreshold: Double = 0.006,
     private val noiseMultiplier: Double = 3.0,
 ) {
     private val buffer = ArrayList<Short>()

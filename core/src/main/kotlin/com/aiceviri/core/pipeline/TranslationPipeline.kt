@@ -20,6 +20,8 @@ sealed interface PipelineEvent {
     data class Translated(val turn: Turn) : PipelineEvent
     data class Speaking(val turn: Turn) : PipelineEvent
     data object Idle : PipelineEvent
+    /** Ses metne çevrildi ama boş/gürültü çıktı; çeviri yapılmadı. */
+    data class Discarded(val text: String) : PipelineEvent
     data class Failed(val error: Throwable) : PipelineEvent
 }
 
@@ -69,6 +71,7 @@ class TranslationPipeline(
                 val transcript = stt.transcribe(clip, hint, sttPrompt(hint, config))
                 val text = transcript.text.trim()
                 if (text.isEmpty() || isNoise(text)) {
+                    onEvent(PipelineEvent.Discarded(text))
                     null
                 } else {
                     onEvent(PipelineEvent.Transcribed(speaker, text))

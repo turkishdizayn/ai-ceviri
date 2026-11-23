@@ -94,6 +94,14 @@ class AudioRouter(context: Context) {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
             }
             if (device != null && am.setCommunicationDevice(device)) {
+                // Bluetooth ses bağlantısının (SCO) gerçekten kurulmasını bekle;
+                // beklemeden kayda başlanırsa ilk saniyeler sessiz gelir.
+                var waited = 0
+                while (am.communicationDevice?.id != device.id && waited < 2_000) {
+                    delay(100)
+                    waited += 100
+                }
+                delay(300)
                 headsetMicActive = true
                 return true
             }

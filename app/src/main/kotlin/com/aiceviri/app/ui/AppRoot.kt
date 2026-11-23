@@ -44,6 +44,11 @@ fun AppRoot(micGranted: Boolean, onRequestPermission: () -> Unit) {
             settings = settings,
             onChange = vm::updateSettings,
             onBack = vm::back,
+            testing = state.testing,
+            diagnostic = state.diagnostic,
+            level = state.level,
+            onMicTest = vm::runMicTest,
+            onSpeakerTest = vm::runSpeakerTest,
         )
     }
 }

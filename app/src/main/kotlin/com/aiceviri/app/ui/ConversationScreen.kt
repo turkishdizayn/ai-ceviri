@@ -44,6 +44,14 @@ fun ConversationScreen(
             HeaderAction("Yeni", enabled = state.turns.isNotEmpty(), onClick = vm::clearConversation)
         }
         state.error?.let { ErrorBanner(it, vm::dismissError) }
+        if (!settings.speakTranslations) {
+            Surface(color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("🔇 Sesli okuma kapalı", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { vm.updateSettings { it.copy(speakTranslations = true) } }) { Text("Aç") }
+                }
+            }
+        }
 
         when (state.mode) {
             Mode.FACE_TO_FACE -> FaceToFace(state, settings, vm)
