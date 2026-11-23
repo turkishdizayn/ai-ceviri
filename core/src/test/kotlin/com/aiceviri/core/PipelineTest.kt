@@ -29,6 +29,8 @@ import com.aiceviri.core.pipeline.TranslationResult
 import com.aiceviri.core.pipeline.Translator
 import com.aiceviri.core.util.Json
 import com.aiceviri.core.util.path
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -47,8 +49,10 @@ class PipelineTest {
 
     private class FakeStt(var text: String, var lang: Language? = null) : SpeechToText {
         var lastHint: Language? = null
-        override suspend fun transcribe(clip: AudioClip, hint: Language?): Transcript {
+        var lastPrompt: String? = null
+        override suspend fun transcribe(clip: AudioClip, hint: Language?, prompt: String?): Transcript {
             lastHint = hint
+            lastPrompt = prompt
             return Transcript(text, lang)
         }
     }
@@ -125,7 +129,7 @@ class PipelineTest {
     @Test
     fun errorsAreReportedNotThrown() = runBlocking<Unit> {
         val failing = object : SpeechToText {
-            override suspend fun transcribe(clip: AudioClip, hint: Language?): Transcript = throw ApiHttpException(401, "bad key")
+            override suspend fun transcribe(clip: AudioClip, hint: Language?, prompt: String?): Transcript = throw ApiHttpException(401, "bad key")
         }
         val pipeline = TranslationPipeline(failing, FakeTranslator(en), null, null)
         var failure: Throwable? = null
@@ -143,6 +147,79 @@ class PipelineTest {
         val msg = e.userMessage()
         assertTrue(msg.startsWith("Çeviri: Model veya servis adresi bulunamadı (404)."), msg)
         assertTrue("llama-3.1-8b-instant" in msg, msg)
+    }
+
+    @Test
+    fun nextUtteranceIsTranslatedWhilePreviousIsPlaying() = runBlocking<Unit> {
+        val releasePlayback = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val firstPlaying = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val played = mutableListOf<String>()
+        val output = AudioOutput { a, _ ->
+            val text = String(a.bytes)
+            if (played.isEmpty()) { firstPlaying.complete(Unit); releasePlayback.await() }
+            played += text
+        }
+        val stt = FakeStt("Bir")
+        val pipeline = TranslationPipeline(stt, FakeTranslator(en), FakeTts(), output)
+        val cfg = PipelineConfig(pair)
+        val first = launch { pipeline.process(clip, Speaker.A, cfg) {} }
+        firstPlaying.await()
+        // İlk çeviri hâlâ okunurken ikinci cümle çevrilebilmeli
+        stt.text = "İki"
+        val second = async { pipeline.process(clip, Speaker.A, cfg) { } }
+        kotlinx.coroutines.withTimeout(2_000) {
+            while (pipeline.history.all.size < 2) kotlinx.coroutines.delay(10)
+        }
+        assertEquals(listOf("[en] Bir", "[en] İki"), pipeline.history.all.map { it.translated })
+        assertTrue(played.isEmpty(), "ikinci ses, ilki bitmeden çalmamalı")
+        releasePlayback.complete(Unit)
+        first.join(); second.await()
+        assertEquals(listOf("[en] Bir", "[en] İki"), played) // sıra korunur
+    }
+
+    @Test
+    fun sttGetsPromptFromSameLanguageContextAndDomain() = runBlocking<Unit> {
+        val stt = FakeStt("Rezervasyonum var")
+        val pipeline = TranslationPipeline(stt, FakeTranslator(en), null, null)
+        val cfg = PipelineConfig(pair, domain = "otel resepsiyonu")
+        pipeline.process(clip, Speaker.A, cfg) {}
+        assertEquals("otel resepsiyonu", stt.lastPrompt)
+        stt.text = "Adım Ayşe Yılmaz"
+        pipeline.process(clip, Speaker.A, cfg) {}
+        assertEquals("otel resepsiyonu. Rezervasyonum var", stt.lastPrompt)
+        pipeline.process(clip, null, cfg) {}
+        assertNull(stt.lastPrompt, "dil bilinmiyorsa ipucu verilmez")
+    }
+
+    @Test
+    fun reasoningModelsGetLowEffortAndNoTemperature() {
+        val gptOss = OpenAiConfig("k", translateModel = "openai/gpt-oss-120b")
+        assertTrue(gptOss.isReasoningModel)
+        val body = Json.parse(OpenAiTranslator.buildRequestBody(gptOss, TranslationRequest("a", null, pair)))
+        assertEquals("low", body.path("reasoning_effort"))
+        assertNull(body.path("temperature"))
+        assertTrue(OpenAiConfig("k", translateModel = "o4-mini").isReasoningModel)
+        assertTrue(!OpenAiConfig("k", translateModel = "gpt-4o-mini").isReasoningModel)
+        assertTrue(!OpenAiConfig("k", translateModel = "llama-3.3-70b-versatile").isReasoningModel)
+    }
+
+    @Test
+    fun translatorRetriesWithoutJsonModeOn400() = runBlocking<Unit> {
+        val http = RecordingHttp(ArrayDeque(listOf(
+            HttpResponse(400, """{"error":{"message":"response_format not supported"}}""".toByteArray()),
+            ok("""{"choices":[{"message":{"content":"Hello"}}]}"""),
+        )))
+        val r = OpenAiTranslator({ OpenAiConfig("k", translateModel = "openai/gpt-oss-20b") }, http)
+            .translate(TranslationRequest("Merhaba", tr, pair))
+        assertEquals("Hello", r.text)
+        val retry = Json.parse(String(http.calls[1].body))
+        assertNull(retry.path("response_format")); assertNull(retry.path("reasoning_effort"))
+    }
+
+    @Test
+    fun repeatedWordNoiseIsFiltered() {
+        assertTrue(TranslationPipeline.isNoise("ve ve ve ve ve ve ve"))
+        assertTrue(!TranslationPipeline.isNoise("Bu çok ama çok ama çok güzel bir yer"))
     }
 
     @Test

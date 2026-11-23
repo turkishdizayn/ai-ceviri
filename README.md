@@ -12,7 +12,13 @@ Kelime kelime değil, **anlamı, niyeti ve üslubu** koruyarak çevirir: konuşm
 | **Kulaklıkla Çeviri** | Siz kulaklık takarsınız. Dil otomatik algılanır: karşınızdakinin sözleri **kulaklığınıza**, sizin sözleriniz **telefon hoparlöründen** ona çevrilir. |
 | **Dinle ve Çevir** | Rehber, toplantı, ders, anons… Ortamı sürekli dinler, altyazı gibi gösterir, isterseniz kulaklığınıza okur. |
 
-Her modda yazarak çeviri, konuşmayı paylaşma ve kulaklığın oynat/duraklat tuşuyla başlat/durdur desteklenir.
+| **Foto Çeviri** | Tabela, menü, etiket veya belge fotoğrafı: yazı telefonda okunur (ML Kit), bağlama uygun çevrilir. |
+| **Kayıtlar** | Her konuşma ve foto çevirisi otomatik saklanır; açılabilir, tekrar okunabilir, paylaşılabilir, silinebilir. |
+
+Her çeviride 🔊 tekrar oku ve kopyala; yazarak çeviri; kulaklığın oynat/duraklat tuşuyla başlat/durdur.
+
+### Ücretsiz kullanım (Groq)
+Ayarlar → **Groq (ücretsiz) + telefon sesi** hazır ayarı → console.groq.com'dan alınan anahtar. Seslendirme telefonun kendi (ücretsiz, internetsiz) sesiyle yapılır.
 
 ## Mimari (özet)
 

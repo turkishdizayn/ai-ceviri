@@ -43,9 +43,9 @@ Cümle sonu → çeviri sesi başlangıcı: ~1,5–3 sn (STT ~0,5–1 sn, çevir
 
 | Aşama | İçerik |
 |---|---|
-| **v0.1 (bu sürüm)** | 3 mod, 32 dil, her kulaklık, yazarak çeviri, paylaşma, CI + APK |
-| v0.2 | Akış (streaming) STT ve TTS ile gecikmeyi yarıya indirme; ön plan servisi (ekran kapalıyken dinleme) |
-| v0.3 | Foto çeviri (kamera + OCR + LLM), konuşma kayıtları (Room veritabanı), ses dosyası transkripsiyonu |
+| v0.1 | 3 mod, 32 dil, her kulaklık, yazarak çeviri, paylaşma, CI + APK |
+| **v0.2 (bu sürüm)** | Okuma sırasında sonraki cümlenin işlenmesi, seslendirmenin önceden hazırlanması, reasoning modellerde düşük düşünme süresi; STT bağlam ipucu ve temperature 0; Foto Çeviri; Kayıtlar; tekrar oku/kopyala; Groq hazır ayarı + telefon TTS; yeni tasarım |
+| v0.3 | Akış (streaming) STT/TTS; ön plan servisi (ekran kapalıyken dinleme); ses dosyası transkripsiyonu; Latin dışı alfabeler için foto çeviri |
 | v0.4 | Gerçek zamanlı sesten-sese mod (Realtime API), konuşanın sesine benzer seslendirme (açık rıza ile) |
 | v1.0 | Kendi sunucu (proxy) + kullanıcı hesabı + abonelik/kredi, iOS sürümü, Play Store |
 

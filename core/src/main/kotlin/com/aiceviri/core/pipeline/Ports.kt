@@ -15,8 +15,11 @@ import com.aiceviri.core.model.Turn
 data class Transcript(val text: String, val language: Language? = null)
 
 interface SpeechToText {
-    /** @param hint Konuşulan dil biliniyorsa doğruluğu artırmak için verilir. */
-    suspend fun transcribe(clip: AudioClip, hint: Language?): Transcript
+    /**
+     * @param hint Konuşulan dil biliniyorsa doğruluğu artırmak için verilir.
+     * @param prompt Önceki cümleler / konu: özel isim ve terimlerin doğru yazılmasına yardım eder.
+     */
+    suspend fun transcribe(clip: AudioClip, hint: Language?, prompt: String? = null): Transcript
 }
 
 data class TranslationRequest(

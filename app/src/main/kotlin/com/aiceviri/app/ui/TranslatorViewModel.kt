@@ -2,19 +2,23 @@ package com.aiceviri.app.ui
 
 import android.app.Application
 import android.media.AudioDeviceInfo
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aiceviri.app.AiCeviriApp
+import com.aiceviri.app.audio.DeviceTextToSpeech
 import com.aiceviri.app.audio.HeadsetButton
 import com.aiceviri.app.audio.HeadsetInfo
 import com.aiceviri.app.audio.MicRecorder
 import com.aiceviri.app.audio.SpeechPlayer
-import com.aiceviri.app.audio.DeviceTextToSpeech
 import com.aiceviri.app.audio.SwitchingTextToSpeech
 import com.aiceviri.app.data.AppSettings
+import com.aiceviri.app.data.ConversationStore
+import com.aiceviri.app.photo.PhotoTextRecognizer
 import com.aiceviri.core.audio.AudioClip
 import com.aiceviri.core.audio.AudioMath
 import com.aiceviri.core.audio.UtteranceSegmenter
+import com.aiceviri.core.model.ConversationRecord
 import com.aiceviri.core.model.Speaker
 import com.aiceviri.core.model.Turn
 import com.aiceviri.core.model.userMessage
@@ -33,24 +37,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** Ekran görüntülerindeki uygulamanın modlarının karşılıkları. */
-enum class Mode(val title: String, val description: String) {
+enum class Mode(val title: String, val icon: String, val short: String, val description: String) {
     FACE_TO_FACE(
-        "Yüz Yüze",
+        "Yüz Yüze", "🗣️", "Telefon ortada, sırayla konuşun",
         "Telefon ortada. Her kişi kendi butonuna basıp konuşur, çeviri hoparlörden okunur.",
     ),
     HEADSET(
-        "Kulaklıkla Çeviri",
+        "Kulaklıkla Çeviri", "🎧", "Karşınızdaki kulağınıza çevrilir",
         "Siz kulaklık takın. Karşınızdakinin sözleri kulağınıza, sizin sözleriniz telefon hoparlöründen ona çevrilir. Dil otomatik algılanır.",
     ),
     LISTEN(
-        "Dinle ve Çevir",
-        "Rehber, toplantı, ders, anons… Ortamı sürekli dinler, altyazı olarak gösterir ve isterseniz kulaklığınıza okur.",
+        "Dinle ve Çevir", "👂", "Rehber, toplantı, ders",
+        "Ortamı sürekli dinler, altyazı olarak gösterir ve isterseniz kulaklığınıza okur.",
     ),
 }
 
-enum class Screen { HOME, CONVERSATION, SETTINGS }
+enum class Screen { HOME, CONVERSATION, SETTINGS, PHOTO, RECORDS, RECORD_DETAIL }
 
 enum class Status(val label: String) {
     IDLE("Hazır"),
@@ -59,6 +64,13 @@ enum class Status(val label: String) {
     TRANSLATING("Çevriliyor…"),
     SPEAKING("Okunuyor…"),
 }
+
+data class PhotoState(
+    val busy: Boolean = false,
+    val stage: String = "",
+    val recognized: String? = null,
+    val turn: Turn? = null,
+)
 
 data class UiState(
     val screen: Screen = Screen.HOME,
@@ -71,6 +83,9 @@ data class UiState(
     val level: Float = 0f,
     val micSource: String = "",
     val error: String? = null,
+    val photo: PhotoState = PhotoState(),
+    val records: List<ConversationRecord> = emptyList(),
+    val selectedRecord: ConversationRecord? = null,
 )
 
 class TranslatorViewModel(application: Application) : AndroidViewModel(application) {
@@ -79,6 +94,8 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
     private val settingsRepo = app.settings
     private val router = app.router
     private val recorder = MicRecorder()
+    private val store = ConversationStore(application)
+    private val ocr by lazy { PhotoTextRecognizer(application) }
 
     val settings: StateFlow<AppSettings> = settingsRepo.settings
     val headset: StateFlow<HeadsetInfo?> = router.headset
@@ -110,13 +127,25 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
     private var captureJob: Job? = null
     private var segmenter: UtteranceSegmenter? = null
 
+    // Kayıt oturumu
+    private var sessionId: String = newSessionId()
+    private var sessionStart: Long = System.currentTimeMillis()
+    private var sessionMode: String = ""
+
     // ---------- Navigasyon ----------
 
     fun open(mode: Mode) {
         stopListening()
+        startSession(mode.name)
         _state.update { it.copy(screen = Screen.CONVERSATION, mode = mode, error = null) }
         headsetButton.setActive(true)
         if (mode != Mode.FACE_TO_FACE) startListening(null)
+    }
+
+    fun openPhoto() {
+        stopListening()
+        startSession("PHOTO")
+        _state.update { it.copy(screen = Screen.PHOTO, photo = PhotoState(), error = null) }
     }
 
     fun openSettings() {
@@ -124,11 +153,29 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
         _state.update { it.copy(screen = Screen.SETTINGS) }
     }
 
+    fun openRecords() {
+        stopListening()
+        _state.update { it.copy(screen = Screen.RECORDS, selectedRecord = null) }
+        viewModelScope.launch { _state.update { it.copy(records = store.list()) } }
+    }
+
+    fun openRecord(record: ConversationRecord) {
+        _state.update { it.copy(screen = Screen.RECORD_DETAIL, selectedRecord = record) }
+    }
+
+    fun deleteRecord(record: ConversationRecord) {
+        viewModelScope.launch {
+            store.delete(record.id)
+            _state.update { it.copy(records = store.list(), screen = Screen.RECORDS, selectedRecord = null) }
+        }
+    }
+
     fun back() {
         stopListening()
         player.stop()
         headsetButton.setActive(false)
-        _state.update { it.copy(screen = Screen.HOME, error = null) }
+        val target = if (_state.value.screen == Screen.RECORD_DETAIL) Screen.RECORDS else Screen.HOME
+        _state.update { it.copy(screen = target, error = null) }
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsRepo.update(transform)
@@ -137,12 +184,25 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
 
     fun dismissError() = _state.update { it.copy(error = null) }
 
+    /** Ekranı temizler ve yeni bir kayıt başlatır (eski konuşma Kayıtlar'da kalır). */
     fun clearConversation() {
-        pipeline.history.clear()
-        _state.update { it.copy(turns = emptyList(), pendingText = null) }
+        startSession(sessionMode)
     }
 
     fun transcript(): String = pipeline.history.transcript()
+
+    private fun startSession(mode: String) {
+        pipeline.history.clear()
+        sessionId = newSessionId()
+        sessionStart = System.currentTimeMillis()
+        sessionMode = mode
+        _state.update { it.copy(turns = emptyList(), pendingText = null) }
+    }
+
+    private fun saveSession() {
+        val record = ConversationRecord(sessionId, sessionMode, sessionStart, pipeline.history.all)
+        viewModelScope.launch { runCatching { store.save(record) } }
+    }
 
     // ---------- Dinleme ----------
 
@@ -173,7 +233,8 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         val previous = captureJob
-        val seg = UtteranceSegmenter(recorder.sampleRate)
+        // 600 ms sessizlik = cümle sonu (hız ile cümleyi bölmeme arasında denge)
+        val seg = UtteranceSegmenter(recorder.sampleRate, silenceMs = 600, preRollMs = 300)
         segmenter = seg
         captureJob = viewModelScope.launch {
             // Önceki oturum (mikrofon/SCO) tamamen kapanmadan yenisini açma
@@ -191,6 +252,7 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
                     if (isPlayingOnSpeaker()) {
                         // Hoparlörden okunan çeviriyi tekrar duyup çevirmesin
                         seg.reset()
+                        _state.update { it.copy(level = 0f) }
                         return@collect
                     }
                     val level = (AudioMath.rms(frame) * 8).coerceAtMost(1.0).toFloat()
@@ -246,6 +308,51 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Bir çeviriyi tekrar seslendir (konuşmada, fotoğrafta veya kayıtlarda). */
+    fun replay(turn: Turn) {
+        viewModelScope.launch {
+            player.stop()
+            pipeline.speak(turn, pipelineConfig(), ::onEvent, force = true)
+            onEvent(PipelineEvent.Idle)
+        }
+    }
+
+    // ---------- Foto Çeviri ----------
+
+    fun translatePhoto(uri: Uri) {
+        if (settingsRepo.current.apiKey.isBlank()) {
+            _state.update { it.copy(error = "Önce Ayarlar'dan API anahtarınızı girin.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(photo = PhotoState(busy = true, stage = "Yazı okunuyor…"), error = null) }
+            val text = try {
+                ocr.recognize(uri)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(photo = PhotoState(), error = "Fotoğraf okunamadı: ${e.message}") }
+                return@launch
+            }
+            if (text.isBlank()) {
+                _state.update {
+                    it.copy(photo = PhotoState(), error = "Fotoğrafta okunabilir yazı bulunamadı. Daha yakından ve net çekmeyi deneyin.")
+                }
+                return@launch
+            }
+            _state.update { it.copy(photo = PhotoState(busy = true, stage = "Çevriliyor…", recognized = text)) }
+            val cfg = pipelineConfig().copy(
+                speak = false,
+                domain = listOfNotNull(
+                    "text photographed from a sign, menu, label or document (OCR); fix obvious OCR mistakes and keep line breaks",
+                    settingsRepo.current.domain.ifBlank { null },
+                ).joinToString("; "),
+            )
+            val turn = pipeline.processText(text, null, cfg, ::onEvent)
+            _state.update { it.copy(photo = PhotoState(recognized = text, turn = turn)) }
+        }
+    }
+
     private fun pipelineConfig(): PipelineConfig {
         val s = settingsRepo.current
         return PipelineConfig(
@@ -260,8 +367,9 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
         when (event) {
             is PipelineEvent.Transcribing -> _state.update { it.copy(status = Status.TRANSCRIBING) }
             is PipelineEvent.Transcribed -> _state.update { it.copy(status = Status.TRANSLATING, pendingText = event.text) }
-            is PipelineEvent.Translated -> _state.update {
-                it.copy(turns = pipeline.history.all, pendingText = null)
+            is PipelineEvent.Translated -> {
+                _state.update { it.copy(turns = pipeline.history.all, pendingText = null) }
+                saveSession()
             }
             is PipelineEvent.Speaking -> _state.update { it.copy(status = Status.SPEAKING) }
             is PipelineEvent.Idle -> _state.update {
@@ -283,10 +391,17 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
      * Çevirinin hangi cihazdan çalınacağı.
      * A = uygulama sahibi (kulaklık takan), B = karşıdaki kişi.
      */
-    private fun outputFor(listener: Speaker): AudioDeviceInfo? = when (_state.value.mode) {
-        Mode.FACE_TO_FACE -> router.phoneSpeaker()
-        Mode.HEADSET -> if (listener == Speaker.A) router.headsetOutput() else router.phoneSpeaker()
-        Mode.LISTEN -> router.headsetOutput()
+    private fun outputFor(listener: Speaker): AudioDeviceInfo? {
+        val s = _state.value
+        if (s.screen != Screen.CONVERSATION) {
+            // Foto / Kayıtlar: kulaklık varsa kulaklığa, yoksa varsayılan çıkışa
+            return router.headsetOutput()
+        }
+        return when (s.mode) {
+            Mode.FACE_TO_FACE -> router.phoneSpeaker()
+            Mode.HEADSET -> if (listener == Speaker.A) router.headsetOutput() else router.phoneSpeaker()
+            Mode.LISTEN -> router.headsetOutput()
+        }
     }
 
     private fun isPlayingOnSpeaker(): Boolean {
@@ -301,5 +416,9 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
         headsetButton.release()
         deviceTts.release()
         super.onCleared()
+    }
+
+    private companion object {
+        fun newSessionId(): String = UUID.randomUUID().toString().take(12)
     }
 }

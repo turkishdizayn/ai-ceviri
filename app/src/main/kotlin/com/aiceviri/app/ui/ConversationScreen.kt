@@ -38,17 +38,10 @@ fun ConversationScreen(
 
     Column(Modifier.fillMaxSize()) {
         Header(state.mode.title, onBack = vm::back) {
-            TextButton(
-                onClick = {
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, vm.transcript())
-                    }
-                    context.startActivity(Intent.createChooser(send, "Konuşmayı paylaş"))
-                },
-                enabled = state.turns.isNotEmpty(),
-            ) { Text("Paylaş") }
-            TextButton(onClick = vm::clearConversation, enabled = state.turns.isNotEmpty()) { Text("Temizle") }
+            HeaderAction("Paylaş", enabled = state.turns.isNotEmpty()) {
+                shareText(context, vm.transcript())
+            }
+            HeaderAction("Yeni", enabled = state.turns.isNotEmpty(), onClick = vm::clearConversation)
         }
         state.error?.let { ErrorBanner(it, vm::dismissError) }
 
@@ -96,7 +89,9 @@ private fun ColumnScope.FaceToFace(state: UiState, settings: AppSettings, vm: Tr
             buttonLabel = "${pair.b.nativeName}\n🎤",
             active = state.listening && state.activeSpeaker == Speaker.B,
             color = Orange,
+            level = state.level,
             onTalk = { vm.talk(Speaker.B) },
+            onReplay = vm::replay,
         )
     }
     HorizontalDivider()
@@ -114,7 +109,9 @@ private fun ColumnScope.FaceToFace(state: UiState, settings: AppSettings, vm: Tr
             buttonLabel = "${pair.a.nativeName}\n🎤",
             active = state.listening && state.activeSpeaker == Speaker.A,
             color = Sky,
+            level = state.level,
             onTalk = { vm.talk(Speaker.A) },
+            onReplay = vm::replay,
         )
     }
     TextInput(onSend = vm::sendText, hint = "${pair.a.nameTr} yazın…")
@@ -127,7 +124,9 @@ private fun PersonPane(
     buttonLabel: String,
     active: Boolean,
     color: androidx.compose.ui.graphics.Color,
+    level: Float,
     onTalk: () -> Unit,
+    onReplay: (Turn) -> Unit,
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(turns.size) {
@@ -139,7 +138,7 @@ private fun PersonPane(
             modifier = Modifier.weight(1f).fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(turns, key = { it.id }) { ViewerLine(it, viewer) }
+            items(turns, key = { it.id }) { ViewerLine(it, viewer, onReplay) }
         }
         Spacer(Modifier.width(8.dp))
         BigRoundButton(
@@ -147,6 +146,7 @@ private fun PersonPane(
             active = active,
             color = color,
             onClick = onTalk,
+            level = if (active) level else 0f,
         )
     }
 }
@@ -190,7 +190,7 @@ private fun ColumnScope.Continuous(
                 )
             }
         }
-        items(state.turns, key = { it.id }) { TurnBubble(it) }
+        items(state.turns, key = { it.id }) { TurnBubble(it, onReplay = vm::replay) }
     }
     Row(
         Modifier.fillMaxWidth().padding(8.dp),
@@ -202,6 +202,7 @@ private fun ColumnScope.Continuous(
             active = state.listening,
             color = Sky,
             onClick = vm::toggleListening,
+            level = state.level,
         )
     }
     TextInput(onSend = vm::sendText, hint = "Yazarak çevir…")
@@ -233,4 +234,12 @@ private fun TextInput(onSend: (String) -> Unit, hint: String) {
             enabled = text.isNotBlank(),
         ) { Text("Çevir") }
     }
+}
+
+fun shareText(context: android.content.Context, text: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(send, "Paylaş"))
 }

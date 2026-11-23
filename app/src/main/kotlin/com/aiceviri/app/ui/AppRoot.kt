@@ -21,6 +21,8 @@ fun AppRoot(micGranted: Boolean, onRequestPermission: () -> Unit) {
             micGranted = micGranted,
             onRequestPermission = onRequestPermission,
             onOpen = { mode -> if (micGranted) vm.open(mode) else onRequestPermission() },
+            onPhoto = vm::openPhoto,
+            onRecords = vm::openRecords,
             onSettings = vm::openSettings,
             onLanguageA = { lang -> vm.updateSettings { it.copy(languageA = lang) } },
             onLanguageB = { lang -> vm.updateSettings { it.copy(languageB = lang) } },
@@ -32,6 +34,12 @@ fun AppRoot(micGranted: Boolean, onRequestPermission: () -> Unit) {
             headset = headset,
             vm = vm,
         )
+        Screen.PHOTO -> PhotoScreen(state = state, settings = settings, vm = vm)
+        Screen.RECORDS -> RecordsScreen(state = state, vm = vm)
+        Screen.RECORD_DETAIL -> {
+            val record = state.selectedRecord
+            if (record != null) RecordDetailScreen(record, vm) else RecordsScreen(state, vm)
+        }
         Screen.SETTINGS -> SettingsScreen(
             settings = settings,
             onChange = vm::updateSettings,

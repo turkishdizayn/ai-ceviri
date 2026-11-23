@@ -42,6 +42,16 @@ data class OpenAiConfig(
         return mapOf("Authorization" to "Bearer ${apiKey.trim()}")
     }
 
+    /**
+     * Akıl yürüten (reasoning) çeviri modeli mi? (gpt-oss, o-serisi, gpt-5…)
+     * Bunlarda "düşünme" süresi kısaltılır (hız) ve temperature gönderilmez.
+     */
+    val isReasoningModel: Boolean
+        get() {
+            val m = translateModel.lowercase().substringAfterLast('/')
+            return m.startsWith("gpt-oss") || m.startsWith("gpt-5") || Regex("^o\\d").containsMatchIn(m)
+        }
+
     /** "instructions" (ses tonu talimatı) alanını destekleyen TTS modeli mi? */
     val ttsSupportsInstructions: Boolean get() = ttsModel.startsWith("gpt-")
 
@@ -60,12 +70,15 @@ class OpenAiSpeechToText(
     private val http: HttpTransport,
 ) : SpeechToText {
 
-    override suspend fun transcribe(clip: AudioClip, hint: Language?): Transcript {
+    override suspend fun transcribe(clip: AudioClip, hint: Language?, prompt: String?): Transcript {
         val cfg = config()
         val body = MultipartBuilder()
             .field("model", cfg.sttModel)
             .field("response_format", "json")
+            // 0: en olası metin; uydurma (halüsinasyon) riskini azaltır
+            .field("temperature", "0")
             .apply { if (hint != null) field("language", hint.code) }
+            .apply { if (!prompt.isNullOrBlank()) field("prompt", prompt) }
             .file("file", "speech.wav", "audio/wav", WavEncoder.encode(clip))
         val response = http.post(
             url = "${cfg.normalizedBaseUrl}/audio/transcriptions",
@@ -98,28 +111,47 @@ class OpenAiTranslator(
 
     override suspend fun translate(request: TranslationRequest): TranslationResult {
         val cfg = config()
-        val payload = buildRequestBody(cfg, request)
-        val response = http.post(
-            url = "${cfg.normalizedBaseUrl}/chat/completions",
-            headers = cfg.authHeaders(),
-            body = payload.toByteArray(Charsets.UTF_8),
-            contentType = "application/json; charset=utf-8",
-        ).requireOk("Çeviri")
+        var response = post(cfg, buildRequestBody(cfg, request, jsonMode = true))
+        if (response.code == 400) {
+            // Bazı model/servisler JSON modunu veya reasoning_effort'u desteklemez:
+            // sade istekle bir kez daha dene (cevap ayrıştırıcı düz metni de kabul eder).
+            response = post(cfg, buildRequestBody(cfg, request, jsonMode = false, minimal = true))
+        }
+        response.requireOk("Çeviri")
         val content = extractContent(response.bodyText())
         return TranslationPrompt.parseResponse(content, request)
     }
 
+    private suspend fun post(cfg: OpenAiConfig, payload: String) = http.post(
+        url = "${cfg.normalizedBaseUrl}/chat/completions",
+        headers = cfg.authHeaders(),
+        body = payload.toByteArray(Charsets.UTF_8),
+        contentType = "application/json; charset=utf-8",
+    )
+
     companion object {
-        fun buildRequestBody(cfg: OpenAiConfig, request: TranslationRequest): String {
+        fun buildRequestBody(
+            cfg: OpenAiConfig,
+            request: TranslationRequest,
+            jsonMode: Boolean = true,
+            minimal: Boolean = false,
+        ): String {
             val body = linkedMapOf<String, Any?>(
                 "model" to cfg.translateModel,
                 "messages" to listOf(
                     mapOf("role" to "system", "content" to TranslationPrompt.systemPrompt(request)),
                     mapOf("role" to "user", "content" to TranslationPrompt.userPrompt(request)),
                 ),
-                "response_format" to mapOf("type" to "json_object"),
             )
-            cfg.temperature?.let { body["temperature"] = it }
+            if (jsonMode) body["response_format"] = mapOf("type" to "json_object")
+            if (!minimal) {
+                if (cfg.isReasoningModel) {
+                    // Çeviri için uzun düşünmeye gerek yok: gecikmeyi ciddi şekilde azaltır
+                    body["reasoning_effort"] = "low"
+                } else {
+                    cfg.temperature?.let { body["temperature"] = it }
+                }
+            }
             return Json.stringify(body)
         }
 
