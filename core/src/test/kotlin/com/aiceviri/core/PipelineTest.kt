@@ -69,7 +69,7 @@ class PipelineTest {
     }
 
     @Test
-    fun fullFlowWithKnownSpeaker() = runBlocking {
+    fun fullFlowWithKnownSpeaker() = runBlocking<Unit> {
         val stt = FakeStt("Merhaba, nasılsınız?")
         val translator = FakeTranslator(detect = en)
         val played = mutableListOf<Pair<String, Speaker>>()
@@ -90,7 +90,7 @@ class PipelineTest {
     }
 
     @Test
-    fun autoModeUsesDetectedDirectionAndBuildsContext() = runBlocking {
+    fun autoModeUsesDetectedDirectionAndBuildsContext() = runBlocking<Unit> {
         val stt = FakeStt("Where is the station?")
         val translator = FakeTranslator(detect = en)
         val pipeline = TranslationPipeline(stt, translator, null, null)
@@ -109,7 +109,7 @@ class PipelineTest {
     }
 
     @Test
-    fun noiseAndEmptyTranscriptsAreSkipped() = runBlocking {
+    fun noiseAndEmptyTranscriptsAreSkipped() = runBlocking<Unit> {
         val stt = FakeStt("  ")
         val translator = FakeTranslator(en)
         val pipeline = TranslationPipeline(stt, translator, null, null)
@@ -123,7 +123,7 @@ class PipelineTest {
     }
 
     @Test
-    fun errorsAreReportedNotThrown() = runBlocking {
+    fun errorsAreReportedNotThrown() = runBlocking<Unit> {
         val failing = object : SpeechToText {
             override suspend fun transcribe(clip: AudioClip, hint: Language?): Transcript = throw ApiHttpException(401, "bad key")
         }
@@ -134,7 +134,7 @@ class PipelineTest {
     }
 
     @Test
-    fun textInputSkipsStt() = runBlocking {
+    fun textInputSkipsStt() = runBlocking<Unit> {
         val pipeline = TranslationPipeline(FakeStt("unused"), FakeTranslator(en), null, null)
         val turn = pipeline.processText("Hesap lütfen", Speaker.A, PipelineConfig(pair, speak = false)) {}
         assertEquals("[en] Hesap lütfen", turn!!.translated)
@@ -154,7 +154,7 @@ class PipelineTest {
     private fun ok(json: String) = HttpResponse(200, json.toByteArray())
 
     @Test
-    fun openAiEndToEndWithFakeHttp() = runBlocking {
+    fun openAiEndToEndWithFakeHttp() = runBlocking<Unit> {
         val http = RecordingHttp(ArrayDeque(listOf(
             ok("""{"text":"Merhaba"}"""),
             ok("""{"choices":[{"message":{"role":"assistant","content":"{\"src\":\"tr\",\"text\":\"Hello\"}"}}]}"""),
@@ -209,7 +209,7 @@ class PipelineTest {
     }
 
     @Test
-    fun httpErrorsAndMissingKey() = runBlocking {
+    fun httpErrorsAndMissingKey() = runBlocking<Unit> {
         val http = RecordingHttp(ArrayDeque(listOf(HttpResponse(429, "rate".toByteArray()))))
         val e = assertFailsWith<ApiHttpException> {
             OpenAiTranslator({ OpenAiConfig("k") }, http).translate(TranslationRequest("a", null, pair))
