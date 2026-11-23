@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -45,3 +48,18 @@ jobs:
         with:
           name: ai-ceviri-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      # main'e her push'ta APK bir GitHub Release'e eklenir.
+      # Sabit indirme linki: https://github.com/<repo>/releases/latest/download/ai-ceviri.apk
+      - name: İndirme linki için Release oluştur
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk ai-ceviri.apk
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" ai-ceviri.apk \
+            --target "${{ github.sha }}" \
+            --title "AI Çeviri — derleme ${{ github.run_number }}" \
+            --notes "Otomatik derleme. Commit: ${{ github.sha }}" \
+            --latest

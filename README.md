@@ -38,7 +38,7 @@ Ayrıntılar ve yol haritası: [docs/MIMARI.md](docs/MIMARI.md)
 
 ## Kurulum
 
-1. **APK indirme:** GitHub → *Actions* → son başarılı “Android CI” çalışması → *Artifacts* → `ai-ceviri-debug-apk`.
+1. **APK indirme:** [ai-ceviri.apk (son sürüm)](https://github.com/turkishdizayn/ai-ceviri/releases/latest/download/ai-ceviri.apk) — `main`'e her push'ta otomatik güncellenir. Tüm sürümler: *Releases* sekmesi.
 2. Telefona kurun, mikrofon ve “Yakındaki cihazlar” izinlerini verin.
 3. **Ayarlar** → API anahtarını girin (OpenAI veya OpenAI uyumlu bir servis).
 4. Dilleri seçin, bir mod açın.
