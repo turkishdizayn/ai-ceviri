@@ -37,7 +37,7 @@ class SpeechPlayer(
 
     override suspend fun play(audio: SynthesizedAudio, target: Speaker) {
         val file = withContext(Dispatchers.IO) {
-            File.createTempFile("tts", ".mp3", context.cacheDir).apply { writeBytes(audio.bytes) }
+            File.createTempFile("tts", if (audio.mimeType == "audio/wav") ".wav" else ".mp3", context.cacheDir).apply { writeBytes(audio.bytes) }
         }
         try {
             _playing.value = true

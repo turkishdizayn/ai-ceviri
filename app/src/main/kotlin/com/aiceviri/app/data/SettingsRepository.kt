@@ -26,6 +26,10 @@ data class AppSettings(
     /** Çevirileri sesli oku. */
     val speakTranslations: Boolean = true,
 ) {
+    /** Seslendirme modeli boş ya da "cihaz" ise telefonun kendi ücretsiz sesi kullanılır. */
+    val useDeviceTts: Boolean
+        get() = ttsModel.isBlank() || ttsModel.equals("cihaz", ignoreCase = true)
+
     val pair: LanguagePair
         get() = if (languageA.code != languageB.code) LanguagePair(languageA, languageB)
         else LanguagePair(languageA, if (languageA == Languages.ENGLISH) Languages.TURKISH else Languages.ENGLISH)
@@ -38,6 +42,28 @@ data class AppSettings(
         ttsModel = ttsModel.ifBlank { "gpt-4o-mini-tts" },
         ttsVoice = ttsVoice.ifBlank { "alloy" },
     )
+}
+
+/** Ayarlar ekranındaki tek dokunuşluk servis hazır ayarları. */
+enum class ServicePreset(val title: String, val apply: (AppSettings) -> AppSettings) {
+    OPENAI("OpenAI (en doğal ses, ücretli)", {
+        it.copy(
+            baseUrl = OpenAiConfig.DEFAULT_BASE_URL,
+            sttModel = "gpt-4o-transcribe",
+            translateModel = "gpt-4o-mini",
+            ttsModel = "gpt-4o-mini-tts",
+            ttsVoice = "alloy",
+        )
+    }),
+    GROQ("Groq (ücretsiz) + telefon sesi", {
+        it.copy(
+            baseUrl = "https://api.groq.com/openai/v1",
+            sttModel = "whisper-large-v3-turbo",
+            translateModel = "openai/gpt-oss-120b",
+            ttsModel = "",
+            ttsVoice = "",
+        )
+    }),
 }
 
 /**

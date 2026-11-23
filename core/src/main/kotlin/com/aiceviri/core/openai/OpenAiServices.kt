@@ -50,8 +50,8 @@ data class OpenAiConfig(
     }
 }
 
-private fun HttpResponse.requireOk(): HttpResponse {
-    if (!isSuccessful) throw ApiHttpException(code, bodyText())
+private fun HttpResponse.requireOk(step: String): HttpResponse {
+    if (!isSuccessful) throw ApiHttpException(code, bodyText(), step)
     return this
 }
 
@@ -72,7 +72,7 @@ class OpenAiSpeechToText(
             headers = cfg.authHeaders(),
             body = body.build(),
             contentType = body.contentType,
-        ).requireOk()
+        ).requireOk("Konuşma tanıma")
         return parseTranscription(response.bodyText(), hint)
     }
 
@@ -104,7 +104,7 @@ class OpenAiTranslator(
             headers = cfg.authHeaders(),
             body = payload.toByteArray(Charsets.UTF_8),
             contentType = "application/json; charset=utf-8",
-        ).requireOk()
+        ).requireOk("Çeviri")
         val content = extractContent(response.bodyText())
         return TranslationPrompt.parseResponse(content, request)
     }
@@ -147,7 +147,7 @@ class OpenAiTextToSpeech(
             headers = cfg.authHeaders(),
             body = buildRequestBody(cfg, text, language, tone).toByteArray(Charsets.UTF_8),
             contentType = "application/json; charset=utf-8",
-        ).requireOk()
+        ).requireOk("Seslendirme")
         return SynthesizedAudio(response.body, "audio/mpeg")
     }
 

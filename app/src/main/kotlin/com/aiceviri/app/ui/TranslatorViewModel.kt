@@ -9,6 +9,8 @@ import com.aiceviri.app.audio.HeadsetButton
 import com.aiceviri.app.audio.HeadsetInfo
 import com.aiceviri.app.audio.MicRecorder
 import com.aiceviri.app.audio.SpeechPlayer
+import com.aiceviri.app.audio.DeviceTextToSpeech
+import com.aiceviri.app.audio.SwitchingTextToSpeech
 import com.aiceviri.app.data.AppSettings
 import com.aiceviri.core.audio.AudioClip
 import com.aiceviri.core.audio.AudioMath
@@ -90,10 +92,16 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
         voiceCall = { router.isHeadsetMicActive },
     )
 
+    private val deviceTts = DeviceTextToSpeech(application)
+
     private val pipeline = TranslationPipeline(
         stt = OpenAiSpeechToText({ settingsRepo.current.toOpenAiConfig() }, app.http),
         translator = OpenAiTranslator({ settingsRepo.current.toOpenAiConfig() }, app.http),
-        tts = OpenAiTextToSpeech({ settingsRepo.current.toOpenAiConfig() }, app.http),
+        tts = SwitchingTextToSpeech(
+            useDevice = { settingsRepo.current.useDeviceTts },
+            cloud = OpenAiTextToSpeech({ settingsRepo.current.toOpenAiConfig() }, app.http),
+            device = deviceTts,
+        ),
         output = player,
     )
 
@@ -291,6 +299,7 @@ class TranslatorViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         stopListening()
         headsetButton.release()
+        deviceTts.release()
         super.onCleared()
     }
 }

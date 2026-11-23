@@ -134,6 +134,18 @@ class PipelineTest {
     }
 
     @Test
+    fun httpErrorMessageShowsStepAndServiceDetail() = runBlocking<Unit> {
+        val body = """{"error":{"message":"The model `llama-3.1-8b-instant` does not exist or you do not have access to it.","type":"invalid_request_error","code":"model_not_found"}}"""
+        val http = RecordingHttp(ArrayDeque(listOf(HttpResponse(404, body.toByteArray()))))
+        val e = assertFailsWith<ApiHttpException> {
+            OpenAiTranslator({ OpenAiConfig("k") }, http).translate(TranslationRequest("a", null, pair))
+        }
+        val msg = e.userMessage()
+        assertTrue(msg.startsWith("Çeviri: Model veya servis adresi bulunamadı (404)."), msg)
+        assertTrue("llama-3.1-8b-instant" in msg, msg)
+    }
+
+    @Test
     fun textInputSkipsStt() = runBlocking<Unit> {
         val pipeline = TranslationPipeline(FakeStt("unused"), FakeTranslator(en), null, null)
         val turn = pipeline.processText("Hesap lütfen", Speaker.A, PipelineConfig(pair, speak = false)) {}

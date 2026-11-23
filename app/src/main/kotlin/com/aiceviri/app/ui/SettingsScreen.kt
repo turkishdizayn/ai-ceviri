@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aiceviri.app.data.AppSettings
+import com.aiceviri.app.data.ServicePreset
 import com.aiceviri.core.model.Tone
 
 @Composable
@@ -30,6 +31,17 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Section("Hazır ayar")
+            ServicePreset.entries.forEach { preset ->
+                OutlinedButton(onClick = { onChange(preset.apply) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(preset.title)
+                }
+            }
+            Text(
+                "Hazır ayar servis adresini ve modelleri doldurur; API anahtarını o servisten alıp aşağıya girin.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+
             Section("Yapay zekâ servisi")
             OutlinedTextField(
                 value = settings.apiKey,
@@ -55,6 +67,11 @@ fun SettingsScreen(
             ModelField("Konuşma → metin modeli", settings.sttModel) { v -> onChange { it.copy(sttModel = v) } }
             ModelField("Çeviri modeli", settings.translateModel) { v -> onChange { it.copy(translateModel = v) } }
             ModelField("Seslendirme modeli", settings.ttsModel) { v -> onChange { it.copy(ttsModel = v) } }
+            Text(
+                if (settings.useDeviceTts) "Seslendirme: telefonun kendi sesi (ücretsiz, internetsiz)."
+                else "Seslendirme: bulut modeli. Telefonun ücretsiz sesini kullanmak için boş bırakın.",
+                style = MaterialTheme.typography.bodySmall,
+            )
             ModelField("Ses (voice)", settings.ttsVoice) { v -> onChange { it.copy(ttsVoice = v) } }
 
             Section("Çeviri üslubu")
